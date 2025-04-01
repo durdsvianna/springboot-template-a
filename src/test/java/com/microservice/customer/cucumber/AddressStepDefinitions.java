@@ -7,12 +7,13 @@ import com.microservice.customer.dto.CustomerDto;
 import com.microservice.customer.service.AddressService;
 import com.microservice.customer.service.CustomerService;
 import io.cucumber.datatable.DataTable;
+import io.cucumber.java.After;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.http.HttpStatus;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -28,28 +29,37 @@ public class AddressStepDefinitions {
     @LocalServerPort
     private int port;
     
-    private final CustomerApiClient customerApiClient;
-    private final AddressApiClient addressApiClient;
-    private final CustomerService customerService;
-    private final AddressService addressService;
+    @Autowired
+    private CustomerApiClient customerApiClient;
+    
+    @Autowired
+    private AddressApiClient addressApiClient;
+    
+    @Autowired
+    private CustomerService customerService;
+    
+    @Autowired
+    private AddressService addressService;
     
     private CustomerDto customer;
     private AddressDto inputAddress;
     private AddressDto resultAddress;
     private List<AddressDto> addresses = new ArrayList<>();
     private List<AddressDto> searchResults = new ArrayList<>();
-    private HttpStatus responseStatus;
+    private Exception error;
     
-    @Autowired
-    public AddressStepDefinitions(
-            CustomerApiClient customerApiClient,
-            AddressApiClient addressApiClient,
-            CustomerService customerService,
-            AddressService addressService) {
-        this.customerApiClient = customerApiClient;
-        this.addressApiClient = addressApiClient;
-        this.customerService = customerService;
-        this.addressService = addressService;
+    @After
+    public void cleanup() {
+        // Reset mocks
+        Mockito.reset(customerApiClient, addressApiClient);
+        
+        // Reset test data
+        customer = null;
+        inputAddress = null;
+        resultAddress = null;
+        addresses.clear();
+        searchResults.clear();
+        error = null;
     }
     
     @Given("a customer exists with multiple addresses")
@@ -97,7 +107,7 @@ public class AddressStepDefinitions {
         // Setup customer with addresses
         customer.setAddresses(addresses);
         
-        // Mock API responses
+        // Mock API responses for when service calls them
         when(customerApiClient.getCustomerById(customer.getId())).thenReturn(customer);
         when(addressApiClient.getAddressesByCustomerId(customer.getId())).thenReturn(addresses);
         when(addressApiClient.getAddressById("address1")).thenReturn(primary);
@@ -109,6 +119,7 @@ public class AddressStepDefinitions {
         List<Map<String, String>> rows = dataTable.asMaps(String.class, String.class);
         Map<String, String> addressData = rows.get(0);
         
+        // Prepare input address DTO
         AddressDto addressDto = AddressDto.builder()
                 .street(addressData.get("street"))
                 .number(addressData.get("number"))
@@ -123,7 +134,7 @@ public class AddressStepDefinitions {
         // Save input for validation
         this.inputAddress = addressDto;
         
-        // If customer is null, get it from the CustomerStepDefinitions
+        // If customer is null, create a test customer
         if (customer == null) {
             CustomerDto customerDto = CustomerDto.builder()
                 .id("customer123")
@@ -138,7 +149,7 @@ public class AddressStepDefinitions {
             this.customer = customerDto;
         }
         
-        // Mock the address creation
+        // Mock the address creation response for when service calls it
         AddressDto createdAddress = AddressDto.builder()
                 .id("newAddressId")
                 .street(addressData.get("street"))
@@ -153,16 +164,19 @@ public class AddressStepDefinitions {
                 
         when(addressApiClient.createAddress(anyString(), any(AddressDto.class))).thenReturn(createdAddress);
         
-        // Call service directly
-        this.resultAddress = addressService.createAddress(customer.getId(), addressDto);
-        this.responseStatus = HttpStatus.CREATED;
+        // Call service with explicit exception handling
+        try {
+            this.resultAddress = addressService.createAddress(customer.getId(), addressDto);
+        } catch (Exception e) {
+            this.error = e;
+        }
     }
     
     @Then("the address should be added successfully")
     public void theAddressShouldBeAddedSuccessfully() {
-        assertEquals(HttpStatus.CREATED, responseStatus);
-        assertNotNull(resultAddress);
-        assertNotNull(resultAddress.getId());
+        assertNull(error, "No exception should be thrown");
+        assertNotNull(resultAddress, "Address should be created");
+        assertNotNull(resultAddress.getId(), "Address should have an ID");
     }
     
     @Then("the customer should have the address in their profile")
@@ -170,7 +184,7 @@ public class AddressStepDefinitions {
         String addressId = resultAddress.getId();
         assertNotNull(addressId);
         
-        // Mock a newly created address
+        // Mock a newly created address for when service requests it
         AddressDto newAddress = AddressDto.builder()
                 .id(addressId)
                 .street(inputAddress.getStreet())
@@ -183,29 +197,35 @@ public class AddressStepDefinitions {
                 .primary(inputAddress.isPrimary())
                 .build();
         
-        // Setup mock to return this address when queried
+        // Setup mock to return this address when queried by service
         when(addressApiClient.getAddressById(addressId)).thenReturn(newAddress);
         
-        // Add the address to our customer's addresses
+        // Add the address to our test data
         addresses.add(newAddress);
         customer.setAddresses(addresses);
         
-        // Verify address exists through service call
-        AddressDto foundAddress = addressService.getAddressById(addressId);
-        assertNotNull(foundAddress);
-        
-        // Verify addresses by customer ID contain the new address
+        // Mock the updated list of addresses
         when(addressApiClient.getAddressesByCustomerId(customer.getId())).thenReturn(addresses);
-        List<AddressDto> customerAddresses = addressService.getAddressesByCustomerId(customer.getId());
-        assertTrue(customerAddresses.stream().anyMatch(a -> a.getId().equals(addressId)));
+        
+        // Verify address exists through service call
+        try {
+            AddressDto foundAddress = addressService.getAddressById(addressId);
+            assertNotNull(foundAddress, "Address should exist");
+            
+            List<AddressDto> customerAddresses = addressService.getAddressesByCustomerId(customer.getId());
+            assertTrue(customerAddresses.stream().anyMatch(a -> a.getId().equals(addressId)), 
+                    "Customer should have the new address");
+        } catch (Exception e) {
+            fail("Should not throw exception: " + e.getMessage());
+        }
     }
     
     @When("I set a specific address as primary")
     public void iSetASpecificAddressAsPrimary() {
-        // Get the second address (non-primary one)
+        // Get the second (non-primary) address for our test
         AddressDto nonPrimary = addresses.get(1);
         
-        // Mock the setPrimaryAddress response
+        // Mock the setPrimaryAddress response for when service calls it
         AddressDto updatedPrimaryAddress = AddressDto.builder()
                 .id(nonPrimary.getId())
                 .street(nonPrimary.getStreet())
@@ -220,35 +240,46 @@ public class AddressStepDefinitions {
                 
         when(addressApiClient.setPrimaryAddress(customer.getId(), nonPrimary.getId())).thenReturn(updatedPrimaryAddress);
         
-        // Call service directly
-        this.resultAddress = addressService.setPrimaryAddress(customer.getId(), nonPrimary.getId());
-        this.responseStatus = HttpStatus.OK;
+        // Call service with exception handling
+        try {
+            this.resultAddress = addressService.setPrimaryAddress(customer.getId(), nonPrimary.getId());
+        } catch (Exception e) {
+            this.error = e;
+        }
         
         // Update our test data to reflect these changes
         addresses.get(0).setPrimary(false);
         addresses.get(1).setPrimary(true);
         
-        // Update mocks
+        // Update mocks for subsequent service calls
         when(addressApiClient.getAddressById(addresses.get(0).getId())).thenReturn(addresses.get(0));
         when(addressApiClient.getAddressById(addresses.get(1).getId())).thenReturn(addresses.get(1));
     }
     
     @Then("that address should be marked as primary")
     public void thatAddressShouldBeMarkedAsPrimary() {
-        assertEquals(HttpStatus.OK, responseStatus);
-        assertNotNull(resultAddress);
-        assertTrue(resultAddress.isPrimary());
+        assertNull(error, "No exception should be thrown");
+        assertNotNull(resultAddress, "Address should not be null");
+        assertTrue(resultAddress.isPrimary(), "Address should be marked as primary");
         
         // Verify through service
-        AddressDto updatedAddress = addressService.getAddressById(addresses.get(1).getId());
-        assertTrue(updatedAddress.isPrimary());
+        try {
+            AddressDto updatedAddress = addressService.getAddressById(addresses.get(1).getId());
+            assertTrue(updatedAddress.isPrimary(), "Address should be primary in the service result");
+        } catch (Exception e) {
+            fail("Should not throw exception: " + e.getMessage());
+        }
     }
     
     @Then("any previously primary address should be marked as non-primary")
     public void anyPreviouslyPrimaryAddressShouldBeMarkedAsNonPrimary() {
         // Verify through service
-        AddressDto previousPrimary = addressService.getAddressById(addresses.get(0).getId());
-        assertFalse(previousPrimary.isPrimary());
+        try {
+            AddressDto previousPrimary = addressService.getAddressById(addresses.get(0).getId());
+            assertFalse(previousPrimary.isPrimary(), "Previously primary address should no longer be primary");
+        } catch (Exception e) {
+            fail("Should not throw exception: " + e.getMessage());
+        }
     }
     
     @Given("a customer exists with at least one address")
@@ -281,7 +312,7 @@ public class AddressStepDefinitions {
         addresses.add(resultAddress);
         customer.setAddresses(addresses);
         
-        // Mock API responses
+        // Mock API responses for when service calls them
         when(customerApiClient.getCustomerById(customer.getId())).thenReturn(customer);
         when(addressApiClient.getAddressById(resultAddress.getId())).thenReturn(resultAddress);
         when(addressApiClient.getAddressesByCustomerId(customer.getId())).thenReturn(addresses);
@@ -289,11 +320,14 @@ public class AddressStepDefinitions {
     
     @When("I delete the address")
     public void iDeleteTheAddress() {
-        // Call service directly
-        addressService.deleteAddress(resultAddress.getId());
-        this.responseStatus = HttpStatus.OK;
+        // Call service with exception handling
+        try {
+            addressService.deleteAddress(resultAddress.getId());
+        } catch (Exception e) {
+            this.error = e;
+        }
         
-        // Update mocks to simulate deletion
+        // Update mocks to simulate deletion for subsequent service calls
         addresses.clear();
         when(addressApiClient.getAddressById(resultAddress.getId())).thenReturn(null);
         when(addressApiClient.getAddressesByCustomerId(customer.getId())).thenReturn(addresses);
@@ -301,11 +335,18 @@ public class AddressStepDefinitions {
     
     @Then("the address should be removed from the customer's profile")
     public void theAddressShouldBeRemovedFromTheCustomersProfile() {
-        assertEquals(HttpStatus.OK, responseStatus);
+        assertNull(error, "No exception should be thrown");
         
         // Verify address no longer exists using the service
-        assertNull(addressService.getAddressById(resultAddress.getId()));
-        assertTrue(addressService.getAddressesByCustomerId(customer.getId()).isEmpty());
+        try {
+            AddressDto deletedAddress = addressService.getAddressById(resultAddress.getId());
+            assertNull(deletedAddress, "Address should no longer exist");
+            
+            List<AddressDto> remainingAddresses = addressService.getAddressesByCustomerId(customer.getId());
+            assertTrue(remainingAddresses.isEmpty(), "Customer should have no addresses");
+        } catch (Exception e) {
+            fail("Should not throw exception: " + e.getMessage());
+        }
     }
     
     @Given("multiple addresses exist in different cities")
@@ -352,7 +393,7 @@ public class AddressStepDefinitions {
         addresses.add(chicagoAddress);
         customer.setAddresses(addresses);
         
-        // Mock API responses
+        // Mock API responses for when service calls them
         when(customerApiClient.getCustomerById(customer.getId())).thenReturn(customer);
         when(addressApiClient.getAddressesByCustomerId(customer.getId())).thenReturn(addresses);
         when(addressApiClient.searchAddressesByCity("New York")).thenReturn(List.of(nyAddress));
@@ -361,20 +402,23 @@ public class AddressStepDefinitions {
     
     @When("I search for addresses in {string}")
     public void iSearchForAddressesInCity(String city) {
-        // Call service directly
-        this.searchResults = addressService.searchAddressesByCity(city);
-        this.responseStatus = HttpStatus.OK;
+        // Call service with exception handling
+        try {
+            this.searchResults = addressService.searchAddressesByCity(city);
+        } catch (Exception e) {
+            this.error = e;
+        }
     }
     
     @Then("the response should contain only addresses in {string}")
     public void theResponseShouldContainOnlyAddressesInCity(String city) {
-        assertEquals(HttpStatus.OK, responseStatus);
-        assertNotNull(searchResults);
-        assertFalse(searchResults.isEmpty());
+        assertNull(error, "No exception should be thrown");
+        assertNotNull(searchResults, "Search results should not be null");
+        assertFalse(searchResults.isEmpty(), "Search results should not be empty");
         
         // Verify all returned addresses are in the specified city
         for (AddressDto address : searchResults) {
-            assertEquals(city, address.getCity());
+            assertEquals(city, address.getCity(), "Address should be in the specified city");
         }
     }
     
@@ -422,7 +466,7 @@ public class AddressStepDefinitions {
         addresses.add(txAddress);
         customer.setAddresses(addresses);
         
-        // Mock API responses
+        // Mock API responses for when service calls them
         when(customerApiClient.getCustomerById(customer.getId())).thenReturn(customer);
         when(addressApiClient.getAddressesByCustomerId(customer.getId())).thenReturn(addresses);
         when(addressApiClient.searchAddressesByState("CA")).thenReturn(List.of(caAddress));
@@ -431,20 +475,23 @@ public class AddressStepDefinitions {
     
     @When("I search for addresses in state {string}")
     public void iSearchForAddressesInState(String state) {
-        // Call service directly
-        this.searchResults = addressService.searchAddressesByState(state);
-        this.responseStatus = HttpStatus.OK;
+        // Call service with exception handling
+        try {
+            this.searchResults = addressService.searchAddressesByState(state);
+        } catch (Exception e) {
+            this.error = e;
+        }
     }
     
     @Then("the response should contain only addresses in state {string}")
     public void theResponseShouldContainOnlyAddressesInState(String state) {
-        assertEquals(HttpStatus.OK, responseStatus);
-        assertNotNull(searchResults);
-        assertFalse(searchResults.isEmpty());
+        assertNull(error, "No exception should be thrown");
+        assertNotNull(searchResults, "Search results should not be null");
+        assertFalse(searchResults.isEmpty(), "Search results should not be empty");
         
         // Verify all returned addresses are in the specified state
         for (AddressDto address : searchResults) {
-            assertEquals(state, address.getState());
+            assertEquals(state, address.getState(), "Address should be in the specified state");
         }
     }
     
@@ -492,7 +539,7 @@ public class AddressStepDefinitions {
         addresses.add(zip90210);
         customer.setAddresses(addresses);
         
-        // Mock API responses
+        // Mock API responses for when service calls them
         when(customerApiClient.getCustomerById(customer.getId())).thenReturn(customer);
         when(addressApiClient.getAddressesByCustomerId(customer.getId())).thenReturn(addresses);
         when(addressApiClient.searchAddressesByZipCode("10001")).thenReturn(List.of(zip10001));
@@ -501,20 +548,23 @@ public class AddressStepDefinitions {
     
     @When("I search for addresses with ZIP code {string}")
     public void iSearchForAddressesWithZIPCode(String zipCode) {
-        // Call service directly
-        this.searchResults = addressService.searchAddressesByZipCode(zipCode);
-        this.responseStatus = HttpStatus.OK;
+        // Call service with exception handling
+        try {
+            this.searchResults = addressService.searchAddressesByZipCode(zipCode);
+        } catch (Exception e) {
+            this.error = e;
+        }
     }
     
     @Then("the response should contain only addresses with ZIP code {string}")
     public void theResponseShouldContainOnlyAddressesWithZIPCode(String zipCode) {
-        assertEquals(HttpStatus.OK, responseStatus);
-        assertNotNull(searchResults);
-        assertFalse(searchResults.isEmpty());
+        assertNull(error, "No exception should be thrown");
+        assertNotNull(searchResults, "Search results should not be null");
+        assertFalse(searchResults.isEmpty(), "Search results should not be empty");
         
         // Verify all returned addresses have the specified ZIP code
         for (AddressDto address : searchResults) {
-            assertEquals(zipCode, address.getZipCode());
+            assertEquals(zipCode, address.getZipCode(), "Address should have the specified ZIP code");
         }
     }
 }

@@ -9,10 +9,6 @@ import io.cucumber.java.After;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
-import io.restassured.RestAssured;
-import io.restassured.http.ContentType;
-import io.restassured.response.Response;
-import io.restassured.specification.RequestSpecification;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -22,8 +18,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static io.restassured.RestAssured.given;
-import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -34,33 +28,32 @@ public class CustomerStepDefinitions {
     @LocalServerPort
     private int port;
     
-    private final CustomerApiClient customerApiClient;
-    private final AddressApiClient addressApiClient;
-    private final CustomerService customerService;
+    @Autowired
+    private CustomerService customerService;
+    
+    @Autowired
+    private CustomerApiClient customerApiClient;
+    
+    @Autowired
+    private AddressApiClient addressApiClient;
     
     private CustomerDto inputCustomer;
     private CustomerDto resultCustomer;
-    private HttpStatus responseStatus;
-    
-    @Autowired
-    public CustomerStepDefinitions(
-            CustomerApiClient customerApiClient,
-            AddressApiClient addressApiClient,
-            CustomerService customerService) {
-        this.customerApiClient = customerApiClient;
-        this.addressApiClient = addressApiClient;
-        this.customerService = customerService;
-    }
+    private Exception error;
     
     @After
     public void cleanup() {
         // Reset mocks instead of clearing database
         Mockito.reset(customerApiClient, addressApiClient);
+        
+        // Reset instance variables
+        inputCustomer = null;
+        resultCustomer = null;
+        error = null;
     }
     
     @Given("the API is available")
     public void theAPIIsAvailable() {
-        // No need to set up RestAssured for service layer tests
         // Just confirm mocks are ready
         assertNotNull(customerApiClient);
         assertNotNull(addressApiClient);
@@ -80,34 +73,37 @@ public class CustomerStepDefinitions {
                 .active(true)
                 .build();
         
-        // Mock the customerApiClient to return this customer
+        // Mock the customerApiClient to return this customer when service calls it
         when(customerApiClient.getCustomerById(anyString())).thenReturn(customerDto);
         when(customerApiClient.getCustomerByEmail(anyString())).thenReturn(customerDto);
         
+        // Store for later assertions
         this.resultCustomer = customerDto;
-        assertNotNull(this.resultCustomer.getId());
     }
     
     @When("I create a customer with the following details:")
     public void iCreateACustomerWithTheFollowingDetails(DataTable dataTable) {
+        // 1. Get Data from Cucumber Step
         List<Map<String, String>> rows = dataTable.asMaps(String.class, String.class);
         Map<String, String> customerData = rows.get(0);
-        
+
+        // 2. Prepare Input Data Transfer Object (DTO)
         CustomerDto customerDto = CustomerDto.builder()
                 .firstName(customerData.get("firstName"))
                 .lastName(customerData.get("lastName"))
                 .email(customerData.get("email"))
                 .phoneNumber(customerData.get("phoneNumber"))
-                .addresses(new ArrayList<>())
-                .active(true)
+                .addresses(new ArrayList<>()) // Initialize addresses list
+                .active(true)                // Set default active status
                 .build();
-        
-        // Save input for validation later
+
+        // 3. Store Input for Later Validation
         this.inputCustomer = customerDto;
-        
-        // Mock the customerApiClient to return a created customer with ID
+
+        // 4. Mock the External API Client Behavior
+        //    - Create a simulated successful response DTO (including a fake ID)
         CustomerDto createdCustomer = CustomerDto.builder()
-                .id("generatedId123")
+                .id("generatedId123") // Simulate ID generation by the external API
                 .firstName(customerDto.getFirstName())
                 .lastName(customerDto.getLastName())
                 .email(customerDto.getEmail())
@@ -115,19 +111,25 @@ public class CustomerStepDefinitions {
                 .addresses(new ArrayList<>())
                 .active(true)
                 .build();
-        
+        //    - Tell the mock client to return this simulated response when its 'createCustomer' is called
         when(customerApiClient.createCustomer(any(CustomerDto.class))).thenReturn(createdCustomer);
-        
-        // Call the service directly instead of using RestAssured
-        this.resultCustomer = customerService.createCustomer(customerDto);
-        this.responseStatus = HttpStatus.CREATED;
+
+        // 5. Execute the Service Method Under Test
+        try {
+            // Call the actual createCustomer method in the CustomerService
+            this.resultCustomer = customerService.createCustomer(customerDto);
+        } catch (Exception e) {
+            // 6. Capture any Exceptions
+            // If the service throws an error, store it for validation in a @Then step
+            this.error = e;
+        }
     }
     
     @Then("the customer should be created successfully")
     public void theCustomerShouldBeCreatedSuccessfully() {
-        assertEquals(HttpStatus.CREATED, responseStatus);
-        assertNotNull(resultCustomer);
-        assertNotNull(resultCustomer.getId());
+        assertNull(error, "No exception should be thrown");
+        assertNotNull(resultCustomer, "Customer should be created");
+        assertNotNull(resultCustomer.getId(), "Customer should have an ID");
     }
     
     @Then("the response should contain the customer details")
@@ -143,14 +145,16 @@ public class CustomerStepDefinitions {
     
     @When("I request the customer by ID")
     public void iRequestTheCustomerByID() {
-        // Call the service directly
-        this.resultCustomer = customerService.getCustomerById(resultCustomer.getId());
-        this.responseStatus = HttpStatus.OK;
+        try {
+            this.resultCustomer = customerService.getCustomerById(resultCustomer.getId());
+        } catch (Exception e) {
+            this.error = e;
+        }
     }
     
     @Then("the response should contain the correct customer details")
     public void theResponseShouldContainTheCorrectCustomerDetails() {
-        assertEquals(HttpStatus.OK, responseStatus);
+        assertNull(error, "No exception should be thrown");
         assertNotNull(resultCustomer);
         assertNotNull(resultCustomer.getId());
         assertNotNull(resultCustomer.getFirstName());
@@ -179,14 +183,17 @@ public class CustomerStepDefinitions {
         // Mock the customerApiClient to return the updated customer
         when(customerApiClient.updateCustomer(anyString(), any(CustomerDto.class))).thenReturn(customerDto);
         
-        // Call service directly
-        this.resultCustomer = customerService.updateCustomer(resultCustomer.getId(), customerDto);
-        this.responseStatus = HttpStatus.OK;
+        // Call service and handle potential exceptions
+        try {
+            this.resultCustomer = customerService.updateCustomer(resultCustomer.getId(), customerDto);
+        } catch (Exception e) {
+            this.error = e;
+        }
     }
     
     @Then("the customer should be updated successfully")
     public void theCustomerShouldBeUpdatedSuccessfully() {
-        assertEquals(HttpStatus.OK, responseStatus);
+        assertNull(error, "No exception should be thrown");
         assertNotNull(resultCustomer);
         assertEquals(inputCustomer.getId(), resultCustomer.getId());
     }
@@ -200,17 +207,22 @@ public class CustomerStepDefinitions {
     
     @When("I delete the customer")
     public void iDeleteTheCustomer() {
-        // Call service directly
-        customerService.deleteCustomer(resultCustomer.getId());
-        this.responseStatus = HttpStatus.OK;
+        try {
+            customerService.deleteCustomer(resultCustomer.getId());
+        } catch (Exception e) {
+            this.error = e;
+        }
     }
     
     @Then("the customer should be deleted successfully")
     public void theCustomerShouldBeDeletedSuccessfully() {
-        assertEquals(HttpStatus.OK, responseStatus);
+        assertNull(error, "No exception should be thrown");
         
-        // Verify the customer no longer exists
+        // Mock the API to return null for deleted customer
         when(customerApiClient.getCustomerById(resultCustomer.getId())).thenReturn(null);
-        assertNull(customerService.getCustomerById(resultCustomer.getId()));
+        
+        // Verify the customer no longer exists through service
+        CustomerDto deletedCustomer = customerService.getCustomerById(resultCustomer.getId());
+        assertNull(deletedCustomer, "Customer should be deleted");
     }
 }

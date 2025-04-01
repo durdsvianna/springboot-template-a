@@ -6,6 +6,7 @@ Feature: Customer Management
   Background:
     Given the API is available
 
+  @simple
   Scenario: Create a new customer
     When I create a customer with the following details:
       | firstName | lastName | email               | phoneNumber  |

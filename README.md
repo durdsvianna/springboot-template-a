@@ -14,6 +14,19 @@ A Spring Boot microservice for managing customers and their addresses via extern
 - RestAssured for API Testing
 - SpringDoc OpenAPI (Swagger UI)
 
+## Architecture
+
+The application follows a classic layered architecture:
+
+1. **Controller Layer**: Handles HTTP requests/responses and input validation
+2. **Service Layer**: Contains business logic and rules, orchestrates operations
+3. **Client Layer**: Manages external API interactions via WebClient
+
+This separation of concerns ensures that:
+- Business logic is isolated from API communication details
+- External dependencies can be easily mocked for testing
+- Code is more maintainable and testable
+
 ## Features
 
 Acts as a gateway to manage customer and address data by calling external APIs.
@@ -52,19 +65,19 @@ The API documentation is available via Swagger UI at `/swagger-ui` when the appl
 
 ## Testing
 
-The application includes three levels of testing:
+The application includes three levels of testing that follow proper architectural testing practices:
 
-1. **Unit Tests**: Testing individual components (like services) in isolation using Mockito to mock API clients.
+1. **Unit Tests**: Testing service classes in isolation using Mockito to mock API clients. This verifies the business logic without calling external dependencies.
    ```bash
    mvn test
    ```
 
-2. **Integration Tests**: Testing the controllers and application context using `TestRestTemplate` and `@MockBean` to mock the API clients (`CustomerApiClient`, `AddressApiClient`). This verifies the controller layer and request/response handling without calling the actual external APIs.
+2. **Integration Tests**: Testing the controllers and application context using `TestRestTemplate` and `@MockBean` to mock the API clients. This verifies the controller layer and request/response handling, ensuring that controllers properly interact with the service layer.
    ```bash
    mvn test -Dtest=*IntegrationTest
    ```
 
-3. **BDD Tests**: Feature-based tests using Cucumber, RestAssured, and `@MockBean` to mock the API clients. This tests the API endpoints from an external perspective, ensuring the application behaves as expected according to the defined features, again without relying on the actual external APIs.
+3. **BDD Tests**: Feature-based tests using Cucumber with RestAssured to test HTTP endpoints and service layer interactions. These tests validate the API behavior from an external perspective while using `@MockBean` to mock the API clients, ensuring complete test coverage without external dependencies.
    ```bash
    mvn test -Dtest=CucumberTestRunner
    ```

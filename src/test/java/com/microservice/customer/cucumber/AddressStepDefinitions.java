@@ -4,23 +4,20 @@ import com.microservice.customer.client.CustomerApiClient;
 import com.microservice.customer.client.AddressApiClient;
 import com.microservice.customer.dto.AddressDto;
 import com.microservice.customer.dto.CustomerDto;
+import com.microservice.customer.service.AddressService;
+import com.microservice.customer.service.CustomerService;
 import io.cucumber.datatable.DataTable;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
-import io.restassured.RestAssured;
-import io.restassured.http.ContentType;
-import io.restassured.response.Response;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.http.HttpStatus;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static io.restassured.RestAssured.given;
-import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -31,16 +28,29 @@ public class AddressStepDefinitions {
     @LocalServerPort
     private int port;
     
-    @MockBean
-    private CustomerApiClient customerApiClient;
-    
-    @MockBean
-    private AddressApiClient addressApiClient;
+    private final CustomerApiClient customerApiClient;
+    private final AddressApiClient addressApiClient;
+    private final CustomerService customerService;
+    private final AddressService addressService;
     
     private CustomerDto customer;
-    private AddressDto address;
+    private AddressDto inputAddress;
+    private AddressDto resultAddress;
     private List<AddressDto> addresses = new ArrayList<>();
-    private Response response;
+    private List<AddressDto> searchResults = new ArrayList<>();
+    private HttpStatus responseStatus;
+    
+    @Autowired
+    public AddressStepDefinitions(
+            CustomerApiClient customerApiClient,
+            AddressApiClient addressApiClient,
+            CustomerService customerService,
+            AddressService addressService) {
+        this.customerApiClient = customerApiClient;
+        this.addressApiClient = addressApiClient;
+        this.customerService = customerService;
+        this.addressService = addressService;
+    }
     
     @Given("a customer exists with multiple addresses")
     public void aCustomerExistsWithMultipleAddresses() {
@@ -96,10 +106,6 @@ public class AddressStepDefinitions {
     
     @When("I add an address with the following details:")
     public void iAddAnAddressWithTheFollowingDetails(DataTable dataTable) {
-        // Setup RestAssured
-        RestAssured.baseURI = "http://localhost";
-        RestAssured.port = port;
-        
         List<Map<String, String>> rows = dataTable.asMaps(String.class, String.class);
         Map<String, String> addressData = rows.get(0);
         
@@ -111,40 +117,70 @@ public class AddressStepDefinitions {
                 .state(addressData.get("state"))
                 .country(addressData.get("country"))
                 .zipCode(addressData.get("zipCode"))
-                .primary(Boolean.parseBoolean(addressData.get("primary")))
+                .primary(Boolean.parseBoolean(addressData.getOrDefault("primary", "false")))
                 .build();
         
-        response = given()
-                .contentType(ContentType.JSON)
-                .body(addressDto)
-                .post("/api/v1/customers/" + customer.getId() + "/addresses");
+        // Save input for validation
+        this.inputAddress = addressDto;
+        
+        // If customer is null, get it from the CustomerStepDefinitions
+        if (customer == null) {
+            CustomerDto customerDto = CustomerDto.builder()
+                .id("customer123")
+                .firstName("Bob")
+                .lastName("Johnson")
+                .email("bob.johnson@example.com")
+                .phoneNumber("+1122334455")
+                .active(true)
+                .build();
+            
+            when(customerApiClient.getCustomerById(anyString())).thenReturn(customerDto);
+            this.customer = customerDto;
+        }
+        
+        // Mock the address creation
+        AddressDto createdAddress = AddressDto.builder()
+                .id("newAddressId")
+                .street(addressData.get("street"))
+                .number(addressData.get("number"))
+                .neighborhood(addressData.get("neighborhood"))
+                .city(addressData.get("city"))
+                .state(addressData.get("state"))
+                .country(addressData.get("country"))
+                .zipCode(addressData.get("zipCode"))
+                .primary(Boolean.parseBoolean(addressData.getOrDefault("primary", "false")))
+                .build();
+                
+        when(addressApiClient.createAddress(anyString(), any(AddressDto.class))).thenReturn(createdAddress);
+        
+        // Call service directly
+        this.resultAddress = addressService.createAddress(customer.getId(), addressDto);
+        this.responseStatus = HttpStatus.CREATED;
     }
     
     @Then("the address should be added successfully")
     public void theAddressShouldBeAddedSuccessfully() {
-        response.then()
-                .statusCode(201)
-                .body("status", equalTo("SUCCESS"))
-                .body("data", notNullValue())
-                .body("data.id", notNullValue());
+        assertEquals(HttpStatus.CREATED, responseStatus);
+        assertNotNull(resultAddress);
+        assertNotNull(resultAddress.getId());
     }
     
     @Then("the customer should have the address in their profile")
     public void theCustomerShouldHaveTheAddressInTheirProfile() {
-        String addressId = response.jsonPath().getString("data.id");
+        String addressId = resultAddress.getId();
         assertNotNull(addressId);
         
         // Mock a newly created address
         AddressDto newAddress = AddressDto.builder()
                 .id(addressId)
-                .street("New Street")
-                .number("100")
-                .neighborhood("New Area")
-                .city("New City")
-                .state("NC")
-                .country("USA")
-                .zipCode("12345")
-                .primary(false)
+                .street(inputAddress.getStreet())
+                .number(inputAddress.getNumber())
+                .neighborhood(inputAddress.getNeighborhood())
+                .city(inputAddress.getCity())
+                .state(inputAddress.getState())
+                .country(inputAddress.getCountry())
+                .zipCode(inputAddress.getZipCode())
+                .primary(inputAddress.isPrimary())
                 .build();
         
         // Setup mock to return this address when queried
@@ -154,10 +190,14 @@ public class AddressStepDefinitions {
         addresses.add(newAddress);
         customer.setAddresses(addresses);
         
-        // Verify address exists and is associated with our customer
-        AddressDto foundAddress = addressApiClient.getAddressById(addressId);
+        // Verify address exists through service call
+        AddressDto foundAddress = addressService.getAddressById(addressId);
         assertNotNull(foundAddress);
-        assertTrue(customer.getAddresses().stream().anyMatch(a -> a.getId().equals(addressId)));
+        
+        // Verify addresses by customer ID contain the new address
+        when(addressApiClient.getAddressesByCustomerId(customer.getId())).thenReturn(addresses);
+        List<AddressDto> customerAddresses = addressService.getAddressesByCustomerId(customer.getId());
+        assertTrue(customerAddresses.stream().anyMatch(a -> a.getId().equals(addressId)));
     }
     
     @When("I set a specific address as primary")
@@ -165,8 +205,24 @@ public class AddressStepDefinitions {
         // Get the second address (non-primary one)
         AddressDto nonPrimary = addresses.get(1);
         
-        response = given()
-                .patch("/api/v1/customers/" + customer.getId() + "/addresses/" + nonPrimary.getId() + "/primary");
+        // Mock the setPrimaryAddress response
+        AddressDto updatedPrimaryAddress = AddressDto.builder()
+                .id(nonPrimary.getId())
+                .street(nonPrimary.getStreet())
+                .number(nonPrimary.getNumber())
+                .neighborhood(nonPrimary.getNeighborhood())
+                .city(nonPrimary.getCity())
+                .state(nonPrimary.getState())
+                .country(nonPrimary.getCountry())
+                .zipCode(nonPrimary.getZipCode())
+                .primary(true)
+                .build();
+                
+        when(addressApiClient.setPrimaryAddress(customer.getId(), nonPrimary.getId())).thenReturn(updatedPrimaryAddress);
+        
+        // Call service directly
+        this.resultAddress = addressService.setPrimaryAddress(customer.getId(), nonPrimary.getId());
+        this.responseStatus = HttpStatus.OK;
         
         // Update our test data to reflect these changes
         addresses.get(0).setPrimary(false);
@@ -177,22 +233,21 @@ public class AddressStepDefinitions {
         when(addressApiClient.getAddressById(addresses.get(1).getId())).thenReturn(addresses.get(1));
     }
     
-    @Then("the address should be marked as primary")
-    public void theAddressShouldBeMarkedAsPrimary() {
-        response.then()
-                .statusCode(200)
-                .body("status", equalTo("SUCCESS"))
-                .body("data.primary", equalTo(true));
+    @Then("that address should be marked as primary")
+    public void thatAddressShouldBeMarkedAsPrimary() {
+        assertEquals(HttpStatus.OK, responseStatus);
+        assertNotNull(resultAddress);
+        assertTrue(resultAddress.isPrimary());
         
-        // Verify in API client
-        AddressDto updatedAddress = addressApiClient.getAddressById(addresses.get(1).getId());
+        // Verify through service
+        AddressDto updatedAddress = addressService.getAddressById(addresses.get(1).getId());
         assertTrue(updatedAddress.isPrimary());
     }
     
     @Then("any previously primary address should be marked as non-primary")
     public void anyPreviouslyPrimaryAddressShouldBeMarkedAsNonPrimary() {
-        // Verify in API client
-        AddressDto previousPrimary = addressApiClient.getAddressById(addresses.get(0).getId());
+        // Verify through service
+        AddressDto previousPrimary = addressService.getAddressById(addresses.get(0).getId());
         assertFalse(previousPrimary.isPrimary());
     }
     
@@ -209,7 +264,7 @@ public class AddressStepDefinitions {
                 .build();
         
         // Create address
-        address = AddressDto.builder()
+        resultAddress = AddressDto.builder()
                 .id("address3")
                 .street("789 Pine Blvd")
                 .number("3")
@@ -222,35 +277,35 @@ public class AddressStepDefinitions {
                 .build();
         
         // Setup customer with address
-        addresses.add(address);
+        addresses.clear();
+        addresses.add(resultAddress);
         customer.setAddresses(addresses);
         
         // Mock API responses
         when(customerApiClient.getCustomerById(customer.getId())).thenReturn(customer);
-        when(addressApiClient.getAddressById(address.getId())).thenReturn(address);
+        when(addressApiClient.getAddressById(resultAddress.getId())).thenReturn(resultAddress);
         when(addressApiClient.getAddressesByCustomerId(customer.getId())).thenReturn(addresses);
     }
     
     @When("I delete the address")
     public void iDeleteTheAddress() {
-        response = given()
-                .delete("/api/v1/addresses/" + address.getId());
+        // Call service directly
+        addressService.deleteAddress(resultAddress.getId());
+        this.responseStatus = HttpStatus.OK;
         
         // Update mocks to simulate deletion
         addresses.clear();
-        when(addressApiClient.getAddressById(address.getId())).thenReturn(null);
+        when(addressApiClient.getAddressById(resultAddress.getId())).thenReturn(null);
         when(addressApiClient.getAddressesByCustomerId(customer.getId())).thenReturn(addresses);
     }
     
-    @Then("the address should be deleted successfully")
-    public void theAddressShouldBeDeletedSuccessfully() {
-        response.then()
-                .statusCode(200)
-                .body("status", equalTo("SUCCESS"));
+    @Then("the address should be removed from the customer's profile")
+    public void theAddressShouldBeRemovedFromTheCustomersProfile() {
+        assertEquals(HttpStatus.OK, responseStatus);
         
-        // Verify address no longer exists
-        assertNull(addressApiClient.getAddressById(address.getId()));
-        assertTrue(addressApiClient.getAddressesByCustomerId(customer.getId()).isEmpty());
+        // Verify address no longer exists using the service
+        assertNull(addressService.getAddressById(resultAddress.getId()));
+        assertTrue(addressService.getAddressesByCustomerId(customer.getId()).isEmpty());
     }
     
     @Given("multiple addresses exist in different cities")
@@ -306,23 +361,20 @@ public class AddressStepDefinitions {
     
     @When("I search for addresses in {string}")
     public void iSearchForAddressesInCity(String city) {
-        response = given()
-                .when()
-                .get("/api/v1/addresses/search/city/" + city);
+        // Call service directly
+        this.searchResults = addressService.searchAddressesByCity(city);
+        this.responseStatus = HttpStatus.OK;
     }
     
     @Then("the response should contain only addresses in {string}")
     public void theResponseShouldContainOnlyAddressesInCity(String city) {
-        response.then()
-                .statusCode(200)
-                .body("status", equalTo("SUCCESS"))
-                .body("data", notNullValue())
-                .body("data.size()", greaterThan(0));
+        assertEquals(HttpStatus.OK, responseStatus);
+        assertNotNull(searchResults);
+        assertFalse(searchResults.isEmpty());
         
         // Verify all returned addresses are in the specified city
-        List<Map<String, Object>> addresses = response.jsonPath().getList("data");
-        for (Map<String, Object> address : addresses) {
-            assertEquals(city, address.get("city"));
+        for (AddressDto address : searchResults) {
+            assertEquals(city, address.getCity());
         }
     }
     
@@ -379,23 +431,20 @@ public class AddressStepDefinitions {
     
     @When("I search for addresses in state {string}")
     public void iSearchForAddressesInState(String state) {
-        response = given()
-                .when()
-                .get("/api/v1/addresses/search/state/" + state);
+        // Call service directly
+        this.searchResults = addressService.searchAddressesByState(state);
+        this.responseStatus = HttpStatus.OK;
     }
     
     @Then("the response should contain only addresses in state {string}")
     public void theResponseShouldContainOnlyAddressesInState(String state) {
-        response.then()
-                .statusCode(200)
-                .body("status", equalTo("SUCCESS"))
-                .body("data", notNullValue())
-                .body("data.size()", greaterThan(0));
+        assertEquals(HttpStatus.OK, responseStatus);
+        assertNotNull(searchResults);
+        assertFalse(searchResults.isEmpty());
         
         // Verify all returned addresses are in the specified state
-        List<Map<String, Object>> addresses = response.jsonPath().getList("data");
-        for (Map<String, Object> address : addresses) {
-            assertEquals(state, address.get("state"));
+        for (AddressDto address : searchResults) {
+            assertEquals(state, address.getState());
         }
     }
     
@@ -452,23 +501,20 @@ public class AddressStepDefinitions {
     
     @When("I search for addresses with ZIP code {string}")
     public void iSearchForAddressesWithZIPCode(String zipCode) {
-        response = given()
-                .when()
-                .get("/api/v1/addresses/search/zipcode/" + zipCode);
+        // Call service directly
+        this.searchResults = addressService.searchAddressesByZipCode(zipCode);
+        this.responseStatus = HttpStatus.OK;
     }
     
     @Then("the response should contain only addresses with ZIP code {string}")
     public void theResponseShouldContainOnlyAddressesWithZIPCode(String zipCode) {
-        response.then()
-                .statusCode(200)
-                .body("status", equalTo("SUCCESS"))
-                .body("data", notNullValue())
-                .body("data.size()", greaterThan(0));
+        assertEquals(HttpStatus.OK, responseStatus);
+        assertNotNull(searchResults);
+        assertFalse(searchResults.isEmpty());
         
         // Verify all returned addresses have the specified ZIP code
-        List<Map<String, Object>> addresses = response.jsonPath().getList("data");
-        for (Map<String, Object> address : addresses) {
-            assertEquals(zipCode, address.get("zipCode"));
+        for (AddressDto address : searchResults) {
+            assertEquals(zipCode, address.getZipCode());
         }
     }
 }

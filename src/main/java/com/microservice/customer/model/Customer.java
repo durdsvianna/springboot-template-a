@@ -4,9 +4,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -17,10 +14,8 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Document(collection = "customers")
 public class Customer {
     
-    @Id
     private String id;
     
     @NotBlank(message = "First name is required")
@@ -31,7 +26,6 @@ public class Customer {
     
     @Email(message = "Invalid email format")
     @NotBlank(message = "Email is required")
-    @Indexed(unique = true)
     private String email;
     
     @Pattern(regexp = "^\\+?[0-9]{10,15}$", message = "Invalid phone number format")

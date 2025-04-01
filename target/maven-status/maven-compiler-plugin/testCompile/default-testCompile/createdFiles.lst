@@ -1,0 +1,11 @@
+com/microservice/customer/cucumber/AddressStepDefinitions.class
+com/microservice/customer/integration/CustomerIntegrationTest$2.class
+com/microservice/customer/service/CustomerServiceTest.class
+com/microservice/customer/integration/CustomerIntegrationTest$4.class
+com/microservice/customer/integration/CustomerIntegrationTest$3.class
+com/microservice/customer/cucumber/CucumberSpringConfiguration.class
+com/microservice/customer/service/AddressServiceTest.class
+com/microservice/customer/cucumber/CustomerStepDefinitions.class
+com/microservice/customer/integration/CustomerIntegrationTest.class
+com/microservice/customer/cucumber/CucumberTestRunner.class
+com/microservice/customer/integration/CustomerIntegrationTest$1.class

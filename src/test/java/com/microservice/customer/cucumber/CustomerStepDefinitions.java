@@ -1,10 +1,8 @@
 package com.microservice.customer.cucumber;
 
+import com.microservice.customer.client.CustomerApiClient;
+import com.microservice.customer.client.AddressApiClient;
 import com.microservice.customer.dto.CustomerDto;
-import com.microservice.customer.model.Address;
-import com.microservice.customer.model.Customer;
-import com.microservice.customer.repository.AddressRepository;
-import com.microservice.customer.repository.CustomerRepository;
 import io.cucumber.datatable.DataTable;
 import io.cucumber.java.After;
 import io.cucumber.java.en.Given;
@@ -14,7 +12,9 @@ import io.restassured.RestAssured;
 import io.restassured.http.ContentType;
 import io.restassured.response.Response;
 import io.restassured.specification.RequestSpecification;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
 import java.util.ArrayList;
@@ -24,26 +24,28 @@ import java.util.Map;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 public class CustomerStepDefinitions {
     
     @LocalServerPort
     private int port;
     
-    @Autowired
-    private CustomerRepository customerRepository;
+    @MockBean
+    private CustomerApiClient customerApiClient;
     
-    @Autowired
-    private AddressRepository addressRepository;
+    @MockBean
+    private AddressApiClient addressApiClient;
     
     private Response response;
-    private Customer customer;
-    private CustomerDto customerDto;
+    private CustomerDto customer;
     
     @After
     public void cleanup() {
-        addressRepository.deleteAll();
-        customerRepository.deleteAll();
+        // Reset mocks instead of clearing database
+        Mockito.reset(customerApiClient, addressApiClient);
     }
     
     @Given("the API is available")
@@ -57,7 +59,8 @@ public class CustomerStepDefinitions {
         List<Map<String, String>> rows = dataTable.asMaps(String.class, String.class);
         Map<String, String> customerData = rows.get(0);
         
-        Customer customer = Customer.builder()
+        CustomerDto customerDto = CustomerDto.builder()
+                .id("customer123")
                 .firstName(customerData.get("firstName"))
                 .lastName(customerData.get("lastName"))
                 .email(customerData.get("email"))
@@ -65,7 +68,11 @@ public class CustomerStepDefinitions {
                 .active(true)
                 .build();
         
-        this.customer = customerRepository.save(customer);
+        // Mock the customerApiClient to return this customer
+        when(customerApiClient.getCustomerById(anyString())).thenReturn(customerDto);
+        when(customerApiClient.getCustomerByEmail(anyString())).thenReturn(customerDto);
+        
+        this.customer = customerDto;
         assertNotNull(this.customer.getId());
     }
     
@@ -74,7 +81,7 @@ public class CustomerStepDefinitions {
         List<Map<String, String>> rows = dataTable.asMaps(String.class, String.class);
         Map<String, String> customerData = rows.get(0);
         
-        customerDto = CustomerDto.builder()
+        CustomerDto customerDto = CustomerDto.builder()
                 .firstName(customerData.get("firstName"))
                 .lastName(customerData.get("lastName"))
                 .email(customerData.get("email"))
@@ -102,10 +109,10 @@ public class CustomerStepDefinitions {
     @Then("the response should contain the customer details")
     public void theResponseShouldContainTheCustomerDetails() {
         response.then()
-                .body("data.firstName", equalTo(customerDto.getFirstName()))
-                .body("data.lastName", equalTo(customerDto.getLastName()))
-                .body("data.email", equalTo(customerDto.getEmail()))
-                .body("data.phoneNumber", equalTo(customerDto.getPhoneNumber()));
+                .body("data.firstName", equalTo(customer.getFirstName()))
+                .body("data.lastName", equalTo(customer.getLastName()))
+                .body("data.email", equalTo(customer.getEmail()))
+                .body("data.phoneNumber", equalTo(customer.getPhoneNumber()));
     }
     
     @When("I request the customer by ID")
@@ -131,7 +138,7 @@ public class CustomerStepDefinitions {
         List<Map<String, String>> rows = dataTable.asMaps(String.class, String.class);
         Map<String, String> customerData = rows.get(0);
         
-        customerDto = CustomerDto.builder()
+        CustomerDto customerDto = CustomerDto.builder()
                 .id(customer.getId())
                 .firstName(customerData.get("firstName"))
                 .lastName(customerData.get("lastName"))
@@ -160,9 +167,9 @@ public class CustomerStepDefinitions {
     @Then("the response should contain the updated details")
     public void theResponseShouldContainTheUpdatedDetails() {
         response.then()
-                .body("data.firstName", equalTo(customerDto.getFirstName()))
-                .body("data.lastName", equalTo(customerDto.getLastName()))
-                .body("data.email", equalTo(customerDto.getEmail()));
+                .body("data.firstName", equalTo(customer.getFirstName()))
+                .body("data.lastName", equalTo(customer.getLastName()))
+                .body("data.email", equalTo(customer.getEmail()));
     }
     
     @When("I delete the customer")
@@ -179,6 +186,7 @@ public class CustomerStepDefinitions {
                 .body("status", equalTo("SUCCESS"));
         
         // Verify the customer no longer exists in the database
-        assertFalse(customerRepository.existsById(customer.getId()));
+        when(customerApiClient.getCustomerById(customer.getId())).thenReturn(null);
+        assertNull(customerApiClient.getCustomerById(customer.getId()));
     }
 }

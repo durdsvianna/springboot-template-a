@@ -1,12 +1,10 @@
 package com.microservice.customer.service;
 
+import com.microservice.customer.client.AddressApiClient;
+import com.microservice.customer.client.CustomerApiClient;
 import com.microservice.customer.dto.CustomerDto;
 import com.microservice.customer.exception.DuplicateResourceException;
 import com.microservice.customer.exception.ResourceNotFoundException;
-import com.microservice.customer.mapper.CustomerMapper;
-import com.microservice.customer.model.Customer;
-import com.microservice.customer.repository.AddressRepository;
-import com.microservice.customer.repository.CustomerRepository;
 import com.microservice.customer.service.impl.CustomerServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,33 +16,30 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class CustomerServiceTest {
 
     @Mock
-    private CustomerRepository customerRepository;
+    private CustomerApiClient customerApiClient;
 
     @Mock
-    private AddressRepository addressRepository;
-
-    @Mock
-    private CustomerMapper customerMapper;
+    private AddressApiClient addressApiClient;
 
     @InjectMocks
     private CustomerServiceImpl customerService;
 
     private CustomerDto customerDto;
-    private Customer customer;
 
     @BeforeEach
     void setUp() {
         customerDto = CustomerDto.builder()
+                .id("1")
                 .firstName("John")
                 .lastName("Doe")
                 .email("john.doe@example.com")
@@ -52,24 +47,12 @@ class CustomerServiceTest {
                 .addresses(new ArrayList<>())
                 .active(true)
                 .build();
-
-        customer = Customer.builder()
-                .id("1")
-                .firstName("John")
-                .lastName("Doe")
-                .email("john.doe@example.com")
-                .phoneNumber("+1234567890")
-                .active(true)
-                .build();
     }
 
     @Test
     void createCustomer_Success() {
         // Arrange
-        when(customerRepository.findByEmail(anyString())).thenReturn(Optional.empty());
-        when(customerMapper.toEntity(any(CustomerDto.class))).thenReturn(customer);
-        when(customerRepository.save(any(Customer.class))).thenReturn(customer);
-        when(customerMapper.toDto(any(Customer.class), anyList())).thenReturn(customerDto);
+        when(customerApiClient.createCustomer(any(CustomerDto.class))).thenReturn(customerDto);
 
         // Act
         CustomerDto result = customerService.createCustomer(customerDto);
@@ -80,31 +63,13 @@ class CustomerServiceTest {
         assertEquals(customerDto.getEmail(), result.getEmail());
 
         // Verify
-        verify(customerRepository, times(1)).findByEmail(customerDto.getEmail());
-        verify(customerRepository, times(1)).save(any(Customer.class));
-        verify(customerMapper, times(1)).toEntity(customerDto);
-        verify(customerMapper, times(1)).toDto(any(Customer.class), anyList());
-    }
-
-    @Test
-    void createCustomer_DuplicateEmail_ThrowsException() {
-        // Arrange
-        when(customerRepository.findByEmail(anyString())).thenReturn(Optional.of(customer));
-
-        // Act & Assert
-        assertThrows(DuplicateResourceException.class, () -> customerService.createCustomer(customerDto));
-
-        // Verify
-        verify(customerRepository, times(1)).findByEmail(customerDto.getEmail());
-        verify(customerRepository, never()).save(any(Customer.class));
+        verify(customerApiClient, times(1)).createCustomer(customerDto);
     }
 
     @Test
     void getCustomerById_Success() {
         // Arrange
-        when(customerRepository.findById(anyString())).thenReturn(Optional.of(customer));
-        when(addressRepository.findByCustomerId(anyString())).thenReturn(Collections.emptyList());
-        when(customerMapper.toDto(any(Customer.class), anyList())).thenReturn(customerDto);
+        when(customerApiClient.getCustomerById(anyString())).thenReturn(customerDto);
 
         // Act
         CustomerDto result = customerService.getCustomerById("1");
@@ -115,51 +80,107 @@ class CustomerServiceTest {
         assertEquals(customerDto.getEmail(), result.getEmail());
 
         // Verify
-        verify(customerRepository, times(1)).findById("1");
-        verify(addressRepository, times(1)).findByCustomerId("1");
-        verify(customerMapper, times(1)).toDto(customer, Collections.emptyList());
+        verify(customerApiClient, times(1)).getCustomerById("1");
     }
 
     @Test
-    void getCustomerById_NotFound_ThrowsException() {
+    void getCustomerByEmail_Success() {
         // Arrange
-        when(customerRepository.findById(anyString())).thenReturn(Optional.empty());
+        when(customerApiClient.getCustomerByEmail(anyString())).thenReturn(customerDto);
 
-        // Act & Assert
-        assertThrows(ResourceNotFoundException.class, () -> customerService.getCustomerById("1"));
+        // Act
+        CustomerDto result = customerService.getCustomerByEmail("john.doe@example.com");
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(customerDto.getFirstName(), result.getFirstName());
+        assertEquals(customerDto.getId(), result.getId());
 
         // Verify
-        verify(customerRepository, times(1)).findById("1");
-        verify(addressRepository, never()).findByCustomerId(anyString());
+        verify(customerApiClient, times(1)).getCustomerByEmail("john.doe@example.com");
+    }
+
+    @Test
+    void getAllCustomers_Success() {
+        // Arrange
+        List<CustomerDto> customers = Collections.singletonList(customerDto);
+        when(customerApiClient.getAllCustomers()).thenReturn(customers);
+
+        // Act
+        List<CustomerDto> result = customerService.getAllCustomers();
+
+        // Assert
+        assertNotNull(result);
+        assertFalse(result.isEmpty());
+        assertEquals(1, result.size());
+        assertEquals(customerDto.getId(), result.get(0).getId());
+
+        // Verify
+        verify(customerApiClient, times(1)).getAllCustomers();
+    }
+
+    @Test
+    void searchCustomers_Success() {
+        // Arrange
+        List<CustomerDto> customers = Collections.singletonList(customerDto);
+        when(customerApiClient.searchCustomers(anyString(), anyString())).thenReturn(customers);
+
+        // Act
+        List<CustomerDto> result = customerService.searchCustomers("John", "Doe");
+
+        // Assert
+        assertNotNull(result);
+        assertFalse(result.isEmpty());
+        assertEquals(1, result.size());
+        assertEquals(customerDto.getFirstName(), result.get(0).getFirstName());
+
+        // Verify
+        verify(customerApiClient, times(1)).searchCustomers("John", "Doe");
+    }
+
+    @Test
+    void updateCustomer_Success() {
+        // Arrange
+        when(customerApiClient.updateCustomer(anyString(), any(CustomerDto.class))).thenReturn(customerDto);
+
+        // Act
+        CustomerDto result = customerService.updateCustomer("1", customerDto);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(customerDto.getId(), result.getId());
+        assertEquals(customerDto.getEmail(), result.getEmail());
+
+        // Verify
+        verify(customerApiClient, times(1)).updateCustomer("1", customerDto);
     }
 
     @Test
     void deleteCustomer_Success() {
         // Arrange
-        when(customerRepository.existsById(anyString())).thenReturn(true);
-        doNothing().when(addressRepository).deleteByCustomerId(anyString());
-        doNothing().when(customerRepository).deleteById(anyString());
+        doNothing().when(customerApiClient).deleteCustomer(anyString());
 
         // Act
         customerService.deleteCustomer("1");
 
         // Verify
-        verify(customerRepository, times(1)).existsById("1");
-        verify(addressRepository, times(1)).deleteByCustomerId("1");
-        verify(customerRepository, times(1)).deleteById("1");
+        verify(customerApiClient, times(1)).deleteCustomer("1");
     }
 
     @Test
-    void deleteCustomer_NotFound_ThrowsException() {
+    void setCustomerStatus_Success() {
         // Arrange
-        when(customerRepository.existsById(anyString())).thenReturn(false);
+        when(customerApiClient.setCustomerStatus(anyString(), anyBoolean())).thenReturn(customerDto);
 
-        // Act & Assert
-        assertThrows(ResourceNotFoundException.class, () -> customerService.deleteCustomer("1"));
+        // Act
+        CustomerDto result = customerService.setCustomerStatus("1", true);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(customerDto.getId(), result.getId());
+        assertTrue(result.isActive());
 
         // Verify
-        verify(customerRepository, times(1)).existsById("1");
-        verify(addressRepository, never()).deleteByCustomerId(anyString());
-        verify(customerRepository, never()).deleteById(anyString());
+        verify(customerApiClient, times(1)).setCustomerStatus("1", true);
     }
 }

@@ -1,14 +1,15 @@
 package com.microservice.customer.integration;
 
+import com.microservice.customer.client.AddressApiClient;
+import com.microservice.customer.client.CustomerApiClient;
 import com.microservice.customer.dto.AddressDto;
 import com.microservice.customer.dto.CustomerDto;
-import com.microservice.customer.repository.AddressRepository;
-import com.microservice.customer.repository.CustomerRepository;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockitoAnnotations;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.core.ParameterizedTypeReference;
@@ -16,24 +17,23 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.MongoDBContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
+import org.springframework.test.context.TestPropertySource;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
-@Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestPropertySource(properties = {
+    "api.base-url=https://xyz.net/api/v1/enterprise"
+})
 class CustomerIntegrationTest {
-
-    @Container
-    static MongoDBContainer mongoDBContainer = new MongoDBContainer("mongo:6.0.5");
 
     @LocalServerPort
     private int port;
@@ -41,34 +41,34 @@ class CustomerIntegrationTest {
     @Autowired
     private TestRestTemplate restTemplate;
 
-    @Autowired
-    private CustomerRepository customerRepository;
+    @MockBean
+    private CustomerApiClient customerApiClient;
 
-    @Autowired
-    private AddressRepository addressRepository;
+    @MockBean
+    private AddressApiClient addressApiClient;
 
     private String baseUrl;
 
-    @DynamicPropertySource
-    static void setProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.data.mongodb.uri", mongoDBContainer::getReplicaSetUrl);
-    }
-
     @BeforeEach
     void setUp() {
+        MockitoAnnotations.openMocks(this);
         baseUrl = "http://localhost:" + port + "/api/v1";
-    }
-
-    @AfterEach
-    void tearDown() {
-        addressRepository.deleteAll();
-        customerRepository.deleteAll();
     }
 
     @Test
     void createCustomer_Success() {
         // Arrange
         CustomerDto customerDto = createSampleCustomerDto();
+        CustomerDto createdCustomer = CustomerDto.builder()
+                .id("generatedId123")
+                .firstName(customerDto.getFirstName())
+                .lastName(customerDto.getLastName())
+                .email(customerDto.getEmail())
+                .phoneNumber(customerDto.getPhoneNumber())
+                .active(true)
+                .build();
+        
+        when(customerApiClient.createCustomer(any(CustomerDto.class))).thenReturn(createdCustomer);
 
         // Act
         ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
@@ -92,17 +92,12 @@ class CustomerIntegrationTest {
 
     @Test
     void getCustomerById_Success() {
-        // Arrange - Create a customer first
+        // Arrange
+        String customerId = "customerId123";
         CustomerDto customerDto = createSampleCustomerDto();
-        ResponseEntity<Map<String, Object>> createResponse = restTemplate.exchange(
-                baseUrl + "/customers",
-                HttpMethod.POST,
-                new HttpEntity<>(customerDto),
-                new ParameterizedTypeReference<Map<String, Object>>() {}
-        );
+        customerDto.setId(customerId);
         
-        Map<String, Object> createdCustomer = (Map<String, Object>) createResponse.getBody().get("data");
-        String customerId = (String) createdCustomer.get("id");
+        when(customerApiClient.getCustomerById(customerId)).thenReturn(customerDto);
 
         // Act
         ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
@@ -122,19 +117,13 @@ class CustomerIntegrationTest {
 
     @Test
     void addAddressToCustomer_Success() {
-        // Arrange - Create a customer first
-        CustomerDto customerDto = createSampleCustomerDto();
-        ResponseEntity<Map<String, Object>> createCustomerResponse = restTemplate.exchange(
-                baseUrl + "/customers",
-                HttpMethod.POST,
-                new HttpEntity<>(customerDto),
-                new ParameterizedTypeReference<Map<String, Object>>() {}
-        );
-        
-        Map<String, Object> createdCustomer = (Map<String, Object>) createCustomerResponse.getBody().get("data");
-        String customerId = (String) createdCustomer.get("id");
-        
+        // Arrange
+        String customerId = "customerId123";
         AddressDto addressDto = createSampleAddressDto();
+        AddressDto createdAddress = createSampleAddressDto();
+        createdAddress.setId("addressId123");
+        
+        when(addressApiClient.createAddress(anyString(), any(AddressDto.class))).thenReturn(createdAddress);
 
         // Act
         ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
@@ -156,25 +145,13 @@ class CustomerIntegrationTest {
 
     @Test
     void getAddressesByCustomerId_Success() {
-        // Arrange - Create a customer with an address
-        CustomerDto customerDto = createSampleCustomerDto();
-        ResponseEntity<Map<String, Object>> createCustomerResponse = restTemplate.exchange(
-                baseUrl + "/customers",
-                HttpMethod.POST,
-                new HttpEntity<>(customerDto),
-                new ParameterizedTypeReference<Map<String, Object>>() {}
-        );
-        
-        Map<String, Object> createdCustomer = (Map<String, Object>) createCustomerResponse.getBody().get("data");
-        String customerId = (String) createdCustomer.get("id");
-        
+        // Arrange
+        String customerId = "customerId123";
         AddressDto addressDto = createSampleAddressDto();
-        restTemplate.exchange(
-                baseUrl + "/customers/" + customerId + "/addresses",
-                HttpMethod.POST,
-                new HttpEntity<>(addressDto),
-                new ParameterizedTypeReference<Map<String, Object>>() {}
-        );
+        addressDto.setId("addressId123");
+        List<AddressDto> addresses = Collections.singletonList(addressDto);
+        
+        when(addressApiClient.getAddressesByCustomerId(customerId)).thenReturn(addresses);
 
         // Act
         ResponseEntity<Map<String, Object>> response = restTemplate.exchange(

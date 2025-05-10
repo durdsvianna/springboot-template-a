@@ -1,0 +1,7 @@
+/root/aplic/springboot-template-a/src/test/java/com/microservice/customer/service/CustomerServiceTest.java
+/root/aplic/springboot-template-a/src/test/java/com/microservice/customer/cucumber/AddressStepDefinitions.java
+/root/aplic/springboot-template-a/src/test/java/com/microservice/customer/integration/CustomerIntegrationTest.java
+/root/aplic/springboot-template-a/src/test/java/com/microservice/customer/cucumber/CucumberTestRunner.java
+/root/aplic/springboot-template-a/src/test/java/com/microservice/customer/service/AddressServiceTest.java
+/root/aplic/springboot-template-a/src/test/java/com/microservice/customer/cucumber/CustomerStepDefinitions.java
+/root/aplic/springboot-template-a/src/test/java/com/microservice/customer/cucumber/CucumberSpringConfiguration.java
